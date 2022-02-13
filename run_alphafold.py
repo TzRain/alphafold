@@ -148,14 +148,14 @@ def _check_flag(flag_name: str,
     raise ValueError(f'{flag_name} must {verb} set when running with '
                      f'"--{other_flag_name}={FLAGS[other_flag_name].value}".')
 
-
+#* 预测主体
 def predict_structure(
     fasta_path: str,
     fasta_name: str,
     output_dir_base: str,
-    data_pipeline: Union[pipeline.DataPipeline, pipeline_multimer.DataPipeline],
-    model_runners: Dict[str, model.RunModel],
-    amber_relaxer: relax.AmberRelaxation,
+    data_pipeline: Union[pipeline.DataPipeline, pipeline_multimer.DataPipeline], #? pipeline 和 Union 获取特征的流水线
+    model_runners: Dict[str, model.RunModel],#? 一般使用预设的模型
+    amber_relaxer: relax.AmberRelaxation, #? relax our model predictions by an iterative restrained energy minimization procedure
     benchmark: bool,
     random_seed: int,
     is_prokaryote: Optional[bool] = None):
@@ -169,7 +169,7 @@ def predict_structure(
   if not os.path.exists(msa_output_dir):
     os.makedirs(msa_output_dir)
 
-  # Get features.
+  #* Get features. 使用data_pipline 生成特征
   t_0 = time.time()
   if is_prokaryote is None:
     feature_dict = data_pipeline.process(
@@ -182,7 +182,7 @@ def predict_structure(
         is_prokaryote=is_prokaryote)
   timings['features'] = time.time() - t_0
 
-  # Write out features as a pickled dictionary.
+  # Write out features as a pickled dictionary.  
   features_output_path = os.path.join(output_dir, 'features.pkl')
   with open(features_output_path, 'wb') as f:
     pickle.dump(feature_dict, f, protocol=4)
@@ -191,18 +191,21 @@ def predict_structure(
   relaxed_pdbs = {}
   ranking_confidences = {}
 
-  # Run the models.
+  #* Run the models. 润模型
   num_models = len(model_runners)
   for model_index, (model_name, model_runner) in enumerate(
       model_runners.items()):
     logging.info('Running model %s on %s', model_name, fasta_name)
     t_0 = time.time()
     model_random_seed = model_index + random_seed * num_models
+    
+    #* model_runner.process_features
     processed_feature_dict = model_runner.process_features(
         feature_dict, random_seed=model_random_seed)
     timings[f'process_features_{model_name}'] = time.time() - t_0
 
     t_0 = time.time()
+    #* model_runner.predict
     prediction_result = model_runner.predict(processed_feature_dict,
                                              random_seed=model_random_seed)
     t_diff = time.time() - t_0
@@ -229,7 +232,7 @@ def predict_structure(
     with open(result_output_path, 'wb') as f:
       pickle.dump(prediction_result, f, protocol=4)
 
-    # Add the predicted LDDT in the b-factor column.
+    #? Add the predicted LDDT in the b-factor column.
     # Note that higher predicted LDDT value means higher model confidence.
     plddt_b_factors = np.repeat(
         plddt[:, None], residue_constants.atom_type_num, axis=-1)
@@ -245,8 +248,9 @@ def predict_structure(
       f.write(unrelaxed_pdbs[model_name])
 
     if amber_relaxer:
-      # Relax the prediction.
+      #? Relax the prediction.
       t_0 = time.time()
+      #* amber_relaxer.process
       relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
       timings[f'relax_{model_name}'] = time.time() - t_0
 
@@ -335,6 +339,7 @@ def main(argv):
   else:  # Default is_prokaryote to False.
     is_prokaryote_list = [False] * len(fasta_names)
 
+  #* 构造feature pipline
   if run_multimer_system:
     template_searcher = hmmsearch.Hmmsearch(
         binary_path=FLAGS.hmmsearch_binary_path,
